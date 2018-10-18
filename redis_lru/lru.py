@@ -14,13 +14,15 @@ from contextlib import contextmanager
 import redis
 
 from redis_lru.utils import sha1, get_my_caller
-
+from redis_lru.serializers import JSONSerializer
 
 logger = logging.getLogger(__name__)
 
 
+
+
 def redis_lru_cache(max_size=1024, expiration=15 * 60, node=None,
-                    cache=None):
+                    cache=None, serializer=None):
     """
     >>> @redis_lru_cache(20, 1)
     ... def f(x):
@@ -37,8 +39,12 @@ def redis_lru_cache(max_size=1024, expiration=15 * 60, node=None,
     def wrapper(func):
         if not cache:
             unique_key = '{}#{}'.format(func.__module__, func.__name__)
-            lru_cache = RedisLRUCacheDict(unique_key, max_size,
-                                          expiration, node)
+            if not serializer:
+                lru_cache = RedisLRUCacheDict(unique_key, max_size,
+                                            expiration, node)
+            else:
+                lru_cache = RedisLRUCacheDict(unique_key, max_size,
+                                            expiration, node, serializer)
         else:
             lru_cache = cache
 
@@ -115,7 +121,7 @@ class RedisLRUCacheDict(object):
     ONCE_CLEAN_RATIO = 0.1
 
     def __init__(self, unique_key=None, max_size=1024, expiration=15*60,
-                 node=None, clear_stat=False):
+                 node=None, serializer=JSONSerializer(), clear_stat=False):
         if unique_key:
             try:
                 unique_key = str(unique_key)
@@ -138,6 +144,8 @@ class RedisLRUCacheDict(object):
 
         if clear_stat:
             self.node.delete(self.stat_key)
+        
+        self.serializer = serializer
 
     def report_usage(self):
         return self.node.hgetall(self.stat_key)
@@ -171,7 +179,7 @@ class RedisLRUCacheDict(object):
     @joint_key
     def __setitem__(self, key, value):
         try:
-            value = json.dumps(value)
+            value = self.serializer.dumps(value)
         except Exception:  # here too broad exception clause, just ignore it
             with redis_pipeline(self.node) as p:
                 p.hincrby(self.stat_key, self.DUMPS_ERROR, 1)
@@ -212,7 +220,7 @@ class RedisLRUCacheDict(object):
             raise KeyError(real_key)
         else:
             try:
-                value = json.loads(value)
+                value = self.serializer.loads(value)
             except Exception:
                 with redis_pipeline(self.node) as p:
                     p.delete(key)
@@ -241,7 +249,7 @@ class RedisLRUCacheDict(object):
         )
         return sha1(filename, line_number, function_name, lines, index)
 
-
+    
 if __name__ == "__main__":
     import doctest
 
