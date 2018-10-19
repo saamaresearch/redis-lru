@@ -13,7 +13,7 @@ class AbstractBaseSerializer(ABC):
         pass
     
     @abstractmethod
-    def dumps(self, dumpable:Any)-> BytesIO:
+    def dumps(self, dumpable:Any)-> Union[str, BytesIO]:
         pass
 
 class JSONSerializer(AbstractBaseSerializer):
