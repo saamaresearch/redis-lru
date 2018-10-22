@@ -5,16 +5,17 @@
 @date: 2018/2/11
 """
 
-import json
 import time
 import logging
+import simplejson as json
 from functools import wraps
 from contextlib import contextmanager
+from collections import defaultdict, Counter
 
 import redis
 
 from redis_lru.utils import sha1, get_my_caller
-from redis_lru.serializers import JSONSerializer
+from redis_lru.serializers import AbstractBaseSerializer
 
 logger = logging.getLogger(__name__)
 
@@ -22,7 +23,7 @@ logger = logging.getLogger(__name__)
 
 
 def redis_lru_cache(max_size=1024, expiration=15 * 60, node=None,
-                    cache=None, serializer=None):
+                    cache=None):
     """
     >>> @redis_lru_cache(20, 1)
     ... def f(x):
@@ -39,12 +40,8 @@ def redis_lru_cache(max_size=1024, expiration=15 * 60, node=None,
     def wrapper(func):
         if not cache:
             unique_key = '{}#{}'.format(func.__module__, func.__name__)
-            if not serializer:
-                lru_cache = RedisLRUCacheDict(unique_key, max_size,
-                                            expiration, node)
-            else:
-                lru_cache = RedisLRUCacheDict(unique_key, max_size,
-                                            expiration, node, serializer)
+            lru_cache = RedisLRUCacheDict(unique_key, max_size,
+                                        expiration, node)
         else:
             lru_cache = cache
 
@@ -121,7 +118,7 @@ class RedisLRUCacheDict(object):
     ONCE_CLEAN_RATIO = 0.1
 
     def __init__(self, unique_key=None, max_size=1024, expiration=15*60,
-                 node=None, serializer=JSONSerializer(), clear_stat=False):
+                 node=None, clear_stat=False):
         if unique_key:
             try:
                 unique_key = str(unique_key)
@@ -144,8 +141,8 @@ class RedisLRUCacheDict(object):
 
         if clear_stat:
             self.node.delete(self.stat_key)
-        
-        self.serializer = serializer
+        # TODO: Make a defaultdict of <Counter,factory_method>
+        self.storedtypes_registry = {}
 
     def report_usage(self):
         return self.node.hgetall(self.stat_key)
@@ -179,7 +176,16 @@ class RedisLRUCacheDict(object):
     @joint_key
     def __setitem__(self, key, value):
         try:
-            value = self.serializer.dumps(value)
+            if hasattr(value, 'redis_dumps') and hasattr(value, 'redis_loads'):
+                import ipdb; ipdb.set_trace()
+                value_dict = value.redis_dumps()
+                value_deserializer = value.redis_loads
+                value = json.dumps(value_dict)
+                value_type_key = value_dict['type']
+                if value_type_key not in self.storedtypes_registry:
+                    self.storedtypes_registry[value_type_key] = value_deserializer
+            else:
+                value = json.dumps(value)
         except Exception:  # here too broad exception clause, just ignore it
             with redis_pipeline(self.node) as p:
                 p.hincrby(self.stat_key, self.DUMPS_ERROR, 1)
@@ -220,7 +226,10 @@ class RedisLRUCacheDict(object):
             raise KeyError(real_key)
         else:
             try:
-                value = self.serializer.loads(value)
+                value = json.loads(value)
+                if 'type' in value.keys():
+                    deserializer = self.storedtypes_registry[value['type']]
+                    value = deserializer(value)
             except Exception:
                 with redis_pipeline(self.node) as p:
                     p.delete(key)

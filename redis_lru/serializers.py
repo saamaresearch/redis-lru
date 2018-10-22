@@ -9,19 +9,10 @@ class AbstractBaseSerializer(ABC):
         super().__init__()
     
     @abstractmethod
-    def loads(self, loadable: Union[str, BytesIO])-> Any:
+    def redis_loads(self, loadable: Union[str, BytesIO])-> Any:
         pass
     
     @abstractmethod
-    def dumps(self, dumpable:Any)-> Union[str, BytesIO]:
+    def redis_dumps(self, dumpable:Any)-> Union[str, BytesIO]:
         pass
 
-class JSONSerializer(AbstractBaseSerializer):
-    def __init__(self):
-        pass
-
-    def loads(self, loadable):
-        return json.loads(loadable)
-
-    def dumps(self, dumpable):
-        return json.dumps(dumpable)
